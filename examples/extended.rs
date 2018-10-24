@@ -8,7 +8,7 @@ extern crate hyper_reverse_proxy;
 extern crate tokio_core;
 extern crate tokio_signal;
 
-use futures::{BoxFuture, Future, Stream};
+use futures::{Future, Stream};
 use tokio_core::reactor::Handle;
 use std::net::{SocketAddr, Ipv4Addr};
 
@@ -19,17 +19,17 @@ error_chain! {
     }
 }
 
-fn shutdown_future(handle: &Handle) -> BoxFuture<(), std::io::Error> {
+fn shutdown_future(handle: &Handle) -> impl Future<Item=(), Error=std::io::Error> {
     use tokio_signal::unix::{Signal, SIGINT, SIGTERM};
 
     let sigint = Signal::new(SIGINT, handle).flatten_stream();
     let sigterm = Signal::new(SIGTERM, handle).flatten_stream();
 
-    Stream::select(sigint, sigterm)
+    Box::new(Stream::select(sigint, sigterm)
         .into_future()
         .map(|_| ())
         .map_err(|(e, _)| e)
-        .boxed()
+    )
 }
 
 fn run() -> Result<()> {

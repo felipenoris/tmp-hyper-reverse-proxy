@@ -79,15 +79,16 @@
 //! [tokio_signal]: https://github.com/alexcrichton/tokio-signal
 
 extern crate futures;
-#[macro_use]
 extern crate hyper;
 #[macro_use]
 extern crate lazy_static;
 extern crate unicase;
 
+use hyper::body::Payload;
 use futures::future::Future;
-use hyper::{Body, Headers, Request, Response, StatusCode};
-use hyper::server::Service;
+use hyper::{Body, HeaderMap, Request, Response, StatusCode};
+use hyper::header::HeaderValue;
+use hyper::service::Service;
 use std::marker::PhantomData;
 use std::net::IpAddr;
 
@@ -116,7 +117,7 @@ fn is_hop_header(name: &str) -> bool {
 /// Returns a clone of the headers without the [hop-by-hop headers].
 ///
 /// [hop-by-hop headers]: http://www.w3.org/Protocols/rfc2616/rfc2616-sec13.html
-fn remove_hop_headers(headers: &Headers) -> Headers {
+fn remove_hop_headers(headers: &HeaderMap<HeaderValue>) -> &HeaderMap<HeaderValue> {
     headers
         .iter()
         .filter(|header| !is_hop_header(header.name()))
@@ -124,7 +125,7 @@ fn remove_hop_headers(headers: &Headers) -> Headers {
 }
 
 // TODO: use https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Forwarded ?
-header! {
+//header! {
     /// `X-Forwarded-For` header.
     ///
     /// The `X-Forwarded-For` header describes the path of
@@ -158,7 +159,7 @@ header! {
     ///
     /// - [MDN](https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/X-Forwarded-For)
     /// - [Wikipedia](https://en.wikipedia.org/wiki/X-Forwarded-For)
-    (XForwardedFor, "X-Forwarded-For") => (IpAddr)+
+//    (XForwardedFor, "X-Forwarded-For") => (IpAddr)+
 
     // test_x_forwarded_for {
     //     // Testcases from MDN
@@ -166,7 +167,7 @@ header! {
     //     test_header!(test2, vec![b"203.0.113.195"]);
     //     test_header!(test3, vec![b"203.0.113.195, 70.41.3.18, 150.172.238.178"]);
     // }
-}
+//}
 
 fn create_proxied_response<B>(mut response: Response<B>) -> Response<B> {
     *response.headers_mut() = remove_hop_headers(response.headers());
@@ -198,13 +199,12 @@ impl<C: Service, B> ReverseProxy<C, B> {
         if let Some(ip) = self.remote_ip {
             // This is kind of ugly because of borrowing. Maybe hyper's `Headers` object
             // could use an entry API like `std::collections::HashMap`?
-            if request.headers().has::<XForwardedFor>() {
-                if let Some(prior) = request.headers_mut().get_mut::<XForwardedFor>() {
+            if request.headers().contains_key("x-forwarded-for") {
+                if let Some(prior) = request.headers_mut().get_mut("x-forwarded-for") {
                     prior.push(ip);
                 }
             } else {
-                let header = XForwardedFor(vec![ip]);
-                request.headers_mut().set(header);
+                request.headers_mut().insert("x-forwarded-for", ip);
             }
         }
 
@@ -214,17 +214,17 @@ impl<C: Service, B> ReverseProxy<C, B> {
 
 impl<C, B> Service for ReverseProxy<C, B>
 where
-    B: 'static,
-    C: Service<Request = Request<B>, Response = Response<B>>,
+    B: Payload,
+    C: Service<ReqBody = B, ResBody = B>,
     C::Error: 'static + std::fmt::Display,
     C::Future: 'static,
 {
-    type Request = Request<B>;
-    type Response = Response<B>;
+    type ReqBody = B;
+    type ResBody = B;
     type Error = hyper::Error;
     type Future = Box<Future<Item = Response<B>, Error = hyper::Error>>;
 
-    fn call(&self, request: Self::Request) -> Self::Future {
+    fn call(&mut self, request: Request<Self::ReqBody>) -> Self::Future {
         let proxied_request = self.create_proxied_request(request);
 
         Box::new(self.client.call(proxied_request).then(|response| {

@@ -216,16 +216,6 @@ impl<C: Service, B> ReverseProxy<C, B> {
 
                 _ => panic!("BOOOOOOOOOOM!!!"),
             }
-
-            /*
-            if request.headers().contains_key("x-forwarded-for") {
-                if let Some(prior) = request.headers_mut().get_mut("x-forwarded-for") {
-                    prior.push(ip);
-                }
-            } else {
-                request.headers_mut().insert("x-forwarded-for", ip);
-            }
-            */
         }
 
         request

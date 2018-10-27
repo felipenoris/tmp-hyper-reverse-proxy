@@ -117,11 +117,14 @@ fn is_hop_header(name: &str) -> bool {
 /// Returns a clone of the headers without the [hop-by-hop headers].
 ///
 /// [hop-by-hop headers]: http://www.w3.org/Protocols/rfc2616/rfc2616-sec13.html
-fn remove_hop_headers(headers: &HeaderMap<HeaderValue>) -> &HeaderMap<HeaderValue> {
-    headers
-        .iter()
-        .filter(|header| !is_hop_header(header.name()))
-        .collect()
+fn remove_hop_headers(headers: &HeaderMap<HeaderValue>) -> HeaderMap<HeaderValue> {
+    let mut result = HeaderMap::new();
+    for (k, v) in headers.iter() {
+        if !is_hop_header(k.as_str()) {
+            result.insert(k.clone(), v.clone());
+        }
+    }
+    result
 }
 
 // TODO: use https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Forwarded ?
@@ -199,6 +202,22 @@ impl<C: Service, B> ReverseProxy<C, B> {
         if let Some(ip) = self.remote_ip {
             // This is kind of ugly because of borrowing. Maybe hyper's `Headers` object
             // could use an entry API like `std::collections::HashMap`?
+
+            match request.headers_mut().entry("x-forwarded-for") {
+                Ok(hyper::header::Entry::Vacant(entry)) => {
+                    let addr = format!("{}", ip);
+                    entry.insert(addr.parse().unwrap());
+                },
+
+                Ok(hyper::header::Entry::Occupied(mut entry)) => {
+                    let addr = format!("{}, {}", entry.get().to_str().unwrap(), ip);
+                    entry.insert(addr.parse().unwrap());
+                },
+
+                _ => panic!("BOOOOOOOOOOM!!!"),
+            }
+
+            /*
             if request.headers().contains_key("x-forwarded-for") {
                 if let Some(prior) = request.headers_mut().get_mut("x-forwarded-for") {
                     prior.push(ip);
@@ -206,6 +225,7 @@ impl<C: Service, B> ReverseProxy<C, B> {
             } else {
                 request.headers_mut().insert("x-forwarded-for", ip);
             }
+            */
         }
 
         request
@@ -228,14 +248,24 @@ where
         let proxied_request = self.create_proxied_request(request);
 
         Box::new(self.client.call(proxied_request).then(|response| {
-            Ok(match response {
+
+            let proxied_response = match response {
                 Ok(response) => create_proxied_response(response),
                 Err(error) => {
-                    println!("Error: {}", error); // TODO: Configurable logging
-                    Response::new().with_status(StatusCode::InternalServerError)
+                    //println!("Error: {}", error); // TODO: Configurable logging
+                    //Response::builder()
+                    //    .status(StatusCode::INTERNAL_SERVER_ERROR)
+                    //    .body(())
+                    //    .unwrap()
+
+                    //Response::new().with_status(StatusCode::InternalServerError)
                     // TODO: handle trailers
-                }
-            })
+
+                    panic!("BOOM!!!! {}", error);
+                },
+            };
+
+            Ok(proxied_response)
         }))
     }
 }
